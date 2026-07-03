@@ -30,6 +30,7 @@ model User {
 
   accounts Account[]
   sessions Session[]
+  resumes  Resume[]
 
   @@index([email])
   @@index([username])
@@ -70,4 +71,44 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+model Resume {
+  id       String @id @default(cuid())
+  title    String
+  fileName String
+  fileUrl  String
+  fileSize Int
+  mimeType String
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  analysis ResumeAnalysis?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+
+  @@index([userId])
+}
+
+model ResumeAnalysis {
+  id String @id @default(cuid())
+
+  resumeId String @unique
+  resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  atsScore Int
+
+  extractedSkills   Json
+  extractedProjects Json
+
+  strengths  Json
+  weaknesses Json
+
+  missingKeywords Json
+  suggestions     Json
+
+  createdAt DateTime @default(now())
 }
