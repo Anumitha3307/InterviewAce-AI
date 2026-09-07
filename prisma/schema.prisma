@@ -28,9 +28,10 @@ model User {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  accounts Account[]
-  sessions Session[]
-  resumes  Resume[]
+  accounts          Account[]
+  sessions          Session[]
+  resumes           Resume[]
+  interviewSessions InterviewSession[]
 
   @@index([email])
   @@index([username])
@@ -88,7 +89,6 @@ model Resume {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
 
   @@index([userId])
 }
@@ -111,4 +111,86 @@ model ResumeAnalysis {
   suggestions     Json
 
   createdAt DateTime @default(now())
+}
+
+enum InterviewType {
+  TECHNICAL
+  HR
+  SYSTEM_DESIGN
+  BEHAVIORAL
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum InterviewStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+model InterviewSession {
+  id            String          @id @default(cuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  company       String?
+  role          String
+  interviewType InterviewType
+  difficulty    Difficulty
+  status        InterviewStatus @default(NOT_STARTED)
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  questions InterviewQuestion[]
+
+  @@index([userId])
+}
+
+model InterviewQuestion {
+  id                 String           @id @default(cuid())
+  interviewSessionId String
+  interviewSession   InterviewSession @relation(fields: [interviewSessionId], references: [id], onDelete: Cascade)
+  question           String           @db.Text
+  expectedTopics     Json
+  order              Int
+  createdAt          DateTime         @default(now())
+
+  answers InterviewAnswer[]
+
+  @@index([interviewSessionId])
+}
+
+model InterviewAnswer {
+  id                  String            @id @default(cuid())
+  interviewQuestionId String
+  interviewQuestion   InterviewQuestion @relation(fields: [interviewQuestionId], references: [id], onDelete: Cascade)
+  answer              String            @db.Text
+  durationSeconds     Int?
+  createdAt           DateTime          @default(now())
+
+  feedback InterviewFeedback?
+
+  @@index([interviewQuestionId])
+}
+
+model InterviewFeedback {
+  id                 String          @id @default(cuid())
+  interviewAnswerId  String          @unique
+  interviewAnswer    InterviewAnswer @relation(fields: [interviewAnswerId], references: [id], onDelete: Cascade)
+  score              Int
+  strengths          Json
+  weaknesses         Json
+  suggestions        Json
+  communicationScore Int?
+  technicalScore     Int?
+  confidenceScore    Int?
+  overallFeedback    String          @db.Text
+  createdAt          DateTime        @default(now())
 }
