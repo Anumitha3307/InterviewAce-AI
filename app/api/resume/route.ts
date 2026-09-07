@@ -3,12 +3,13 @@ import path from "path";
 import fs from "fs";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/prisma";
+import { formatResumeAnalysisRecord } from "@/lib/resume/analyzeResume";
 
 /**
  * GET /api/resume
- * Fetches all uploaded resumes for the currently authenticated user
+ * Fetches all uploaded resumes (or single resume if ?id= is specified) for authenticated user
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -18,27 +19,69 @@ export async function GET() {
       );
     }
 
+    const { searchParams } = new URL(req.url);
+    const singleId = searchParams.get("id");
+
+    if (singleId) {
+      const resume = await db.resume.findFirst({
+        where: { id: singleId, userId: session.user.id },
+        include: { analysis: true },
+      });
+
+      if (!resume) {
+        return NextResponse.json(
+          { error: "Resume not found or access denied." },
+          { status: 404 }
+        );
+      }
+
+      const formattedAnalysis = formatResumeAnalysisRecord(resume.analysis);
+
+      return NextResponse.json({
+        resume: {
+          id: resume.id,
+          title: resume.title,
+          fileName: resume.fileName,
+          fileUrl: resume.fileUrl,
+          fileSize: resume.fileSize,
+          mimeType: resume.mimeType,
+          createdAt: resume.createdAt.toISOString(),
+          status: "Uploaded",
+          uploadStatus: "Uploaded",
+          analysisStatus: formattedAnalysis ? "Analyzed" : "Pending Analysis",
+          atsScore: formattedAnalysis ? formattedAnalysis.atsScore : null,
+          summary: formattedAnalysis ? formattedAnalysis.resumeSummary : null,
+          analysis: formattedAnalysis,
+        },
+      });
+    }
+
     const resumes = await db.resume.findMany({
       where: { userId: session.user.id },
       include: {
-        analysis: {
-          select: { atsScore: true },
-        },
+        analysis: true,
       },
       orderBy: { createdAt: "desc" },
     });
 
-    const formatted = resumes.map((r) => ({
-      id: r.id,
-      title: r.title,
-      fileName: r.fileName,
-      fileUrl: r.fileUrl,
-      fileSize: r.fileSize,
-      mimeType: r.mimeType,
-      createdAt: r.createdAt.toISOString(),
-      status: "Uploaded",
-      atsScore: r.analysis?.atsScore ?? 85, // Placeholder ATS score for display
-    }));
+    const formatted = resumes.map((r) => {
+      const formattedAnalysis = formatResumeAnalysisRecord(r.analysis);
+      return {
+        id: r.id,
+        title: r.title,
+        fileName: r.fileName,
+        fileUrl: r.fileUrl,
+        fileSize: r.fileSize,
+        mimeType: r.mimeType,
+        createdAt: r.createdAt.toISOString(),
+        status: "Uploaded",
+        uploadStatus: "Uploaded",
+        analysisStatus: formattedAnalysis ? "Analyzed" : "Pending Analysis",
+        atsScore: formattedAnalysis ? formattedAnalysis.atsScore : null,
+        summary: formattedAnalysis ? formattedAnalysis.resumeSummary : null,
+        analysis: formattedAnalysis,
+      };
+    });
 
     return NextResponse.json({ resumes: formatted }, { status: 200 });
   } catch (error) {
@@ -49,6 +92,7 @@ export async function GET() {
     );
   }
 }
+
 
 /**
  * DELETE /api/resume?id=<id>

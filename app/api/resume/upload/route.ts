@@ -5,6 +5,11 @@ import crypto from "crypto";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/prisma";
 import { extractResumeText, ResumeExtractionError } from "@/lib/resume/extractText";
+import {
+  analyzeResumeText,
+  saveResumeAnalysis,
+  ResumeAnalysisResult,
+} from "@/lib/resume/analyzeResume";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 const ALLOWED_EXTENSIONS = [".pdf", ".docx"];
@@ -143,9 +148,26 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // 12. Run AI Resume Analysis Engine
+    let analysisResult: ResumeAnalysisResult | null = null;
+    let analysisStatus = "Pending Analysis";
+
+    try {
+      analysisResult = await analyzeResumeText(extractedText);
+      await saveResumeAnalysis(resume.id, analysisResult);
+      analysisStatus = "Analyzed";
+    } catch (aiError) {
+      // Graceful error handling: upload must NOT fail if AI fails!
+      console.warn("AI resume analysis failed during upload, flagged as Pending Analysis:", aiError);
+      analysisStatus = "Pending Analysis";
+    }
+
     return NextResponse.json(
       {
-        message: "Resume uploaded and text extracted successfully.",
+        message:
+          analysisStatus === "Analyzed"
+            ? "Resume uploaded and analyzed successfully."
+            : "Resume uploaded successfully. AI analysis is pending.",
         resume: {
           id: resume.id,
           title: resume.title,
@@ -155,10 +177,15 @@ export async function POST(req: NextRequest) {
           mimeType: resume.mimeType,
           createdAt: resume.createdAt.toISOString(),
           status: "Uploaded",
-          atsScore: 85, // Placeholder ATS score for UI
+          uploadStatus: "Uploaded",
+          analysisStatus,
+          atsScore: analysisResult ? analysisResult.atsScore : null,
+          summary: analysisResult ? analysisResult.resumeSummary : null,
+          analysis: analysisResult,
         },
+        analysis: analysisResult,
+        analysisStatus,
         extractedTextLength: extractedText.length,
-        extractedText, // Returned in API response
       },
       { status: 201 }
     );
@@ -170,3 +197,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+

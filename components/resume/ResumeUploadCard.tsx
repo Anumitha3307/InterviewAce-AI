@@ -154,7 +154,7 @@ export function ResumeUploadCard({ onUploadSuccess }: ResumeUploadCardProps) {
           statusText={
             progress < 100
               ? `Uploading document (${progress}%)...`
-              : "Finalizing upload and saving..."
+              : "Analyzing resume with AI..."
           }
           onCancel={handleCancel}
         />
