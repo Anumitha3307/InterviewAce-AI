@@ -4,6 +4,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/prisma";
+import { extractResumeText, ResumeExtractionError } from "@/lib/resume/extractText";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 const ALLOWED_EXTENSIONS = [".pdf", ".docx"];
@@ -102,7 +103,25 @@ export async function POST(req: NextRequest) {
     const buffer = Buffer.from(arrayBuffer);
     await fs.promises.writeFile(filePath, buffer);
 
-    // 9. Standardize mime type for database
+    // 9. Extract plain text from the uploaded resume
+    let extractedText = "";
+    try {
+      extractedText = await extractResumeText(filePath);
+    } catch (extractionErr) {
+      // Remove corrupted/unreadable file from disk
+      await fs.promises.unlink(filePath).catch(() => {});
+
+      if (extractionErr instanceof ResumeExtractionError) {
+        return NextResponse.json(
+          { error: extractionErr.message },
+          { status: 400 }
+        );
+      }
+
+      throw extractionErr;
+    }
+
+    // 10. Standardize mime type for database
     const mimeType =
       ext === ".pdf"
         ? "application/pdf"
@@ -112,7 +131,7 @@ export async function POST(req: NextRequest) {
       path.basename(originalName, ext).trim() ||
       (ext === ".pdf" ? "Resume (PDF)" : "Resume (DOCX)");
 
-    // 10. Persist resume record in database
+    // 11. Persist resume record in database
     const resume = await db.resume.create({
       data: {
         userId: session.user.id,
@@ -126,7 +145,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(
       {
-        message: "Resume uploaded successfully.",
+        message: "Resume uploaded and text extracted successfully.",
         resume: {
           id: resume.id,
           title: resume.title,
@@ -138,6 +157,8 @@ export async function POST(req: NextRequest) {
           status: "Uploaded",
           atsScore: 85, // Placeholder ATS score for UI
         },
+        extractedTextLength: extractedText.length,
+        extractedText, // Returned in API response
       },
       { status: 201 }
     );
