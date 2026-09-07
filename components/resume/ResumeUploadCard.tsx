@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Sparkles, ArrowRight, CheckCircle2 } from "lucide-react";
+import { useState, useRef } from "react";
+import { Sparkles, ArrowRight, CheckCircle2, AlertCircle } from "lucide-react";
 import { ResumeDropzone, SelectedFileInfo } from "./ResumeDropzone";
 import { UploadProgress } from "./UploadProgress";
 import { ResumeItem } from "./ResumeList";
@@ -15,47 +15,84 @@ export function ResumeUploadCard({ onUploadSuccess }: ResumeUploadCardProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
 
   const handleAnalyze = () => {
     if (!selectedFile) return;
 
     setIsUploading(true);
-    setProgress(10);
+    setProgress(0);
     setSuccessMessage(null);
+    setErrorMessage(null);
 
-    // Mock upload and analysis progress (no backend yet as per requirement)
-    const interval = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 95) {
-          clearInterval(interval);
-          setTimeout(() => {
-            setIsUploading(false);
-            setProgress(0);
-            setSuccessMessage(`"${selectedFile.name}" analyzed successfully!`);
+    const formData = new FormData();
+    formData.append("file", selectedFile.file);
 
-            if (onUploadSuccess) {
-              onUploadSuccess({
-                id: `res-${Date.now()}`,
-                title: selectedFile.name.replace(/\.[^/.]+$/, ""),
-                fileName: selectedFile.name,
-                fileSize: selectedFile.size,
-                mimeType: selectedFile.type,
-                createdAt: "Just now",
-                atsScore: Math.floor(Math.random() * 15) + 80, // Mock score 80-95
-                status: "analyzed",
-              });
-            }
+    const xhr = new XMLHttpRequest();
+    xhrRef.current = xhr;
 
-            setSelectedFile(null);
-          }, 600);
-          return 100;
+    // Real upload progress listener
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const percent = Math.round((event.loaded / event.total) * 100);
+        setProgress(percent);
+      }
+    };
+
+    xhr.onload = () => {
+      setIsUploading(false);
+      xhrRef.current = null;
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          setSuccessMessage(`"${selectedFile.name}" uploaded successfully!`);
+          setProgress(100);
+
+          if (onUploadSuccess && data.resume) {
+            onUploadSuccess(data.resume);
+          }
+
+          setSelectedFile(null);
+        } catch {
+          setSuccessMessage(`"${selectedFile.name}" uploaded successfully!`);
+          setSelectedFile(null);
         }
-        return prev + 15;
-      });
-    }, 250);
+      } else {
+        let errText = "Upload failed. Please try again.";
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (data.error) errText = data.error;
+        } catch {
+          // fallback
+        }
+        setErrorMessage(errText);
+        setProgress(0);
+      }
+    };
+
+    xhr.onerror = () => {
+      setIsUploading(false);
+      xhrRef.current = null;
+      setErrorMessage("Network error occurred while uploading. Please check your connection.");
+      setProgress(0);
+    };
+
+    xhr.onabort = () => {
+      setIsUploading(false);
+      xhrRef.current = null;
+      setProgress(0);
+    };
+
+    xhr.open("POST", "/api/resume/upload");
+    xhr.send(formData);
   };
 
   const handleCancel = () => {
+    if (xhrRef.current) {
+      xhrRef.current.abort();
+    }
     setIsUploading(false);
     setProgress(0);
   };
@@ -88,26 +125,36 @@ export function ResumeUploadCard({ onUploadSuccess }: ResumeUploadCardProps) {
         </div>
       )}
 
+      {/* Error Banner */}
+      {errorMessage && (
+        <div
+          role="alert"
+          className="flex items-center gap-2.5 rounded-xl border border-red-500/40 bg-red-950/40 p-3.5 text-xs text-red-300"
+        >
+          <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+          <span>{errorMessage}</span>
+        </div>
+      )}
+
       {/* Drag & Drop Area */}
       <ResumeDropzone
         selectedFile={selectedFile}
         onFileSelect={(file) => {
           setSelectedFile(file);
           setSuccessMessage(null);
+          setErrorMessage(null);
         }}
         disabled={isUploading}
       />
 
-      {/* Mock Upload Progress */}
+      {/* Real Upload Progress */}
       {isUploading && (
         <UploadProgress
           progress={progress}
           statusText={
-            progress < 60
-              ? "Uploading document..."
-              : progress < 90
-              ? "Extracting skills and experience..."
-              : "Calculating ATS score..."
+            progress < 100
+              ? `Uploading document (${progress}%)...`
+              : "Finalizing upload and saving..."
           }
           onCancel={handleCancel}
         />
@@ -126,7 +173,7 @@ export function ResumeUploadCard({ onUploadSuccess }: ResumeUploadCardProps) {
           className="inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.99]"
         >
           <Sparkles className="h-4 w-4" />
-          <span>{isUploading ? "Analyzing..." : "Analyze Resume"}</span>
+          <span>{isUploading ? "Uploading..." : "Analyze Resume"}</span>
           <ArrowRight className="h-4 w-4" />
         </button>
       </div>

@@ -1,26 +1,62 @@
 "use client";
 
-import { FileText, Award, Calendar, Trash2, Eye, FileQuestion } from "lucide-react";
+import { FileText, Award, Calendar, Trash2, Eye, FileQuestion, Loader2 } from "lucide-react";
 import { formatFileSize } from "./ResumeDropzone";
 
 export type ResumeItem = {
   id: string;
   title: string;
   fileName: string;
+  fileUrl?: string;
   fileSize: number;
   mimeType: string;
   createdAt: string;
   atsScore?: number;
-  status: "analyzed" | "processing";
+  status?: string;
 };
 
 export type ResumeListProps = {
   resumes: ResumeItem[];
+  isLoading?: boolean;
   onDelete?: (id: string) => void;
   onView?: (id: string) => void;
 };
 
-export function ResumeList({ resumes, onDelete, onView }: ResumeListProps) {
+export function formatCreatedAt(dateStr: string): string {
+  try {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    const now = new Date();
+    const diffSec = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+    if (diffSec < 60) return "Just now";
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+    if (diffSec < 86400 * 7) return `${Math.floor(diffSec / 86400)}d ago`;
+
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
+export function ResumeList({ resumes, isLoading = false, onDelete, onView }: ResumeListProps) {
+  if (isLoading) {
+    return (
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-8 text-center sm:p-12">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-zinc-800 bg-zinc-800/80 text-blue-400 mb-3">
+          <Loader2 className="h-6 w-6 animate-spin" />
+        </div>
+        <p className="text-sm font-medium text-white">Loading resumes...</p>
+        <p className="mt-1 text-xs text-zinc-400">Fetching your uploaded documents from the database.</p>
+      </div>
+    );
+  }
+
   if (resumes.length === 0) {
     return (
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-8 text-center sm:p-12">
@@ -65,7 +101,7 @@ export function ResumeList({ resumes, onDelete, onView }: ResumeListProps) {
                   <span>•</span>
                   <span className="flex items-center gap-1">
                     <Calendar className="h-3 w-3 text-zinc-500" />
-                    {resume.createdAt}
+                    {formatCreatedAt(resume.createdAt)}
                   </span>
                   <span className="uppercase text-[10px] rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-300">
                     {resume.fileName.endsWith(".pdf") ? "PDF" : "DOCX"}
@@ -75,15 +111,17 @@ export function ResumeList({ resumes, onDelete, onView }: ResumeListProps) {
             </div>
 
             <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t border-zinc-800/60 sm:border-0">
-              {resume.atsScore !== undefined ? (
+              {/* Status Badge */}
+              <span className="rounded-full border border-blue-500/30 bg-blue-950/40 px-2.5 py-1 text-[11px] font-medium text-blue-400">
+                {resume.status || "Uploaded"}
+              </span>
+
+              {/* ATS Score Placeholder */}
+              {resume.atsScore !== undefined && (
                 <div className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-950/30 px-3 py-1 text-xs font-semibold text-emerald-400">
                   <Award className="h-3.5 w-3.5" />
                   <span>ATS: {resume.atsScore}%</span>
                 </div>
-              ) : (
-                <span className="rounded-full border border-amber-500/30 bg-amber-950/30 px-2.5 py-1 text-xs font-medium text-amber-400">
-                  Processing
-                </span>
               )}
 
               <div className="flex items-center gap-1">

@@ -1,43 +1,62 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ResumeUploadCard } from "@/components/resume/ResumeUploadCard";
 import { ResumeList, ResumeItem } from "@/components/resume/ResumeList";
 import { FileCheck, Sparkles } from "lucide-react";
 
-const initialMockResumes: ResumeItem[] = [
-  {
-    id: "res-1",
-    title: "Software_Engineer_Resume_2026",
-    fileName: "Software_Engineer_Resume_2026.pdf",
-    fileSize: 1420000,
-    mimeType: "application/pdf",
-    createdAt: "2 days ago",
-    atsScore: 86,
-    status: "analyzed",
-  },
-  {
-    id: "res-2",
-    title: "FullStack_Developer_TechLead",
-    fileName: "FullStack_Developer_TechLead.docx",
-    fileSize: 2150000,
-    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    createdAt: "1 week ago",
-    atsScore: 78,
-    status: "analyzed",
-  },
-];
-
 export default function ResumePage() {
-  const [resumes, setResumes] = useState<ResumeItem[]>(initialMockResumes);
+  const [resumes, setResumes] = useState<ResumeItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [viewModalId, setViewModalId] = useState<string | null>(null);
 
-  const handleUploadSuccess = (newResume: ResumeItem) => {
-    setResumes((prev) => [newResume, ...prev]);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadResumes = async () => {
+      try {
+        const res = await fetch("/api/resume");
+        if (res.ok && isMounted) {
+          const data = await res.json();
+          setResumes(data.resumes || []);
+        }
+      } catch (err) {
+        console.error("Error fetching resumes:", err);
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    loadResumes();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [refreshKey]);
+
+  const handleUploadSuccess = () => {
+    // Increment key to trigger resume reload from database
+    setRefreshKey((k) => k + 1);
   };
 
-  const handleDelete = (id: string) => {
-    setResumes((prev) => prev.filter((r) => r.id !== id));
+  const handleDelete = async (id: string) => {
+    try {
+      const res = await fetch(`/api/resume?id=${id}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setResumes((prev) => prev.filter((r) => r.id !== id));
+      } else {
+        const data = await res.json();
+        console.error("Failed to delete resume:", data.error);
+      }
+    } catch (err) {
+      console.error("Delete resume request failed:", err);
+    }
   };
 
   const handleView = (id: string) => {
@@ -69,6 +88,7 @@ export default function ResumePage() {
       {/* Resumes List or Empty State */}
       <ResumeList
         resumes={resumes}
+        isLoading={isLoading}
         onDelete={handleDelete}
         onView={handleView}
       />
