@@ -6,7 +6,7 @@ import Link from "next/link";
 import { AlertCircle, AlertTriangle, ArrowLeft, Loader2, Video } from "lucide-react";
 import { InterviewHeader } from "@/components/interview/InterviewHeader";
 import { InterviewLayout } from "@/components/interview/InterviewLayout";
-import type { InterviewSessionData } from "@/components/interview/types";
+import type { InterviewSessionData, InterviewFeedbackData } from "@/components/interview/types";
 
 interface PageProps {
   params: Promise<{ sessionId: string }>;
@@ -21,9 +21,15 @@ export default function InterviewSessionPage({ params }: PageProps) {
   const [session, setSession] = useState<InterviewSessionData | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [evaluations, setEvaluations] = useState<
+    Record<string, { feedback: InterviewFeedbackData | null; status: "Completed" | "Pending" }>
+  >({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [autosaveStatus, setAutosaveStatus] = useState<"saved" | "saving">("saved");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [showExitModal, setShowExitModal] = useState(false);
 
   // Local storage keys
@@ -61,13 +67,38 @@ export default function InterviewSessionPage({ params }: PageProps) {
         if (isMounted) {
           setSession(data.session);
 
-          // Restore answers from localStorage
+          // 1. Hydrate answers & evaluations from persisted DB records
+          const initialAnswers: Record<string, string> = {};
+          const initialEvaluations: Record<
+            string,
+            { feedback: InterviewFeedbackData | null; status: "Completed" | "Pending" }
+          > = {};
+
+          if (data.session.questions && Array.isArray(data.session.questions)) {
+            for (const q of data.session.questions) {
+              if (q.answers && q.answers.length > 0) {
+                const ans = q.answers[0];
+                initialAnswers[q.id] = ans.answer;
+                initialEvaluations[q.id] = {
+                  feedback: ans.feedback || null,
+                  status: ans.feedback ? "Completed" : "Pending",
+                };
+              }
+            }
+          }
+
+          // 2. Hydrate unsaved local drafts from browser localStorage
           try {
             const savedAnswers = localStorage.getItem(storageKeyAnswers);
             if (savedAnswers) {
               const parsed = JSON.parse(savedAnswers);
               if (parsed && typeof parsed === "object") {
-                setAnswers(parsed);
+                // Merge local drafts, giving DB answers priority
+                for (const [qId, draft] of Object.entries(parsed)) {
+                  if (!initialAnswers[qId] && typeof draft === "string") {
+                    initialAnswers[qId] = draft;
+                  }
+                }
               }
             }
 
@@ -85,6 +116,9 @@ export default function InterviewSessionPage({ params }: PageProps) {
           } catch (storageErr) {
             console.warn("Could not restore interview progress from storage:", storageErr);
           }
+
+          setAnswers(initialAnswers);
+          setEvaluations(initialEvaluations);
         }
       } catch (err: unknown) {
         if (isMounted) {
@@ -104,9 +138,12 @@ export default function InterviewSessionPage({ params }: PageProps) {
     };
   }, [sessionId, storageKeyAnswers, storageKeyIndex]);
 
-  // Handle answer change with local autosave (Requirement 8)
+  // Handle answer change with local autosave
   const handleAnswerChange = useCallback(
     (questionId: string, answer: string) => {
+      // If already submitted, ignore edits
+      if (evaluations[questionId]) return;
+
       setAutosaveStatus("saving");
 
       setAnswers((prev) => {
@@ -121,22 +158,118 @@ export default function InterviewSessionPage({ params }: PageProps) {
         return updated;
       });
 
-      // Quick timeout to reflect "saved" state
       const timer = setTimeout(() => {
         setAutosaveStatus("saved");
       }, 400);
 
       return () => clearTimeout(timer);
     },
-    [storageKeyAnswers]
+    [storageKeyAnswers, evaluations]
   );
 
-  // Handle question index changes and persist position to local storage
+  // Submit Answer to POST /api/interview/answer (Requirements 8, 9, 10)
+  const handleSubmitAnswer = useCallback(async () => {
+    if (!session || !session.questions || isSubmitting) return;
+    const currentQ = session.questions[currentIndex];
+    if (!currentQ) return;
+
+    const answerText = answers[currentQ.id]?.trim();
+    if (!answerText) return;
+
+    setIsSubmitting(true);
+    setSubmissionError(null);
+
+    try {
+      const res = await fetch("/api/interview/answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          questionId: currentQ.id,
+          answer: answerText,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to submit answer.");
+      }
+
+      // Update evaluations state
+      setEvaluations((prev) => ({
+        ...prev,
+        [currentQ.id]: {
+          feedback: data.feedback,
+          status: data.feedbackStatus || (data.feedback ? "Completed" : "Pending"),
+        },
+      }));
+
+      // Update session status if session is completed
+      if (data.sessionStatus) {
+        setSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: data.sessionStatus,
+              }
+            : null
+        );
+      }
+    } catch (err: unknown) {
+      setSubmissionError(err instanceof Error ? err.message : "Submission failed.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [session, currentIndex, answers, isSubmitting]);
+
+  // Retry evaluation if pending (Requirement 14)
+  const handleRetryEvaluation = useCallback(async () => {
+    if (!session || !session.questions || isRetrying) return;
+    const currentQ = session.questions[currentIndex];
+    if (!currentQ) return;
+
+    const answerText = answers[currentQ.id]?.trim();
+    if (!answerText) return;
+
+    setIsRetrying(true);
+    setSubmissionError(null);
+
+    try {
+      const res = await fetch("/api/interview/answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          questionId: currentQ.id,
+          answer: answerText,
+          retry: true,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to retry evaluation.");
+      }
+
+      setEvaluations((prev) => ({
+        ...prev,
+        [currentQ.id]: {
+          feedback: data.feedback,
+          status: data.feedbackStatus || (data.feedback ? "Completed" : "Pending"),
+        },
+      }));
+    } catch (err: unknown) {
+      setSubmissionError(err instanceof Error ? err.message : "Retry failed.");
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [session, currentIndex, answers, isRetrying]);
+
+  // Question navigation
   const handleSelectQuestion = useCallback(
     (newIndex: number) => {
       if (!session || !session.questions) return;
       if (newIndex >= 0 && newIndex < session.questions.length) {
         setCurrentIndex(newIndex);
+        setSubmissionError(null);
         try {
           localStorage.setItem(storageKeyIndex, newIndex.toString());
         } catch (e) {
@@ -155,12 +288,14 @@ export default function InterviewSessionPage({ params }: PageProps) {
     handleSelectQuestion(currentIndex + 1);
   }, [currentIndex, handleSelectQuestion]);
 
-  // Prevent leaving page accidentally (Requirement 11)
-  const hasAnswersTyped = Object.values(answers).some((ans) => ans && ans.trim().length > 0);
+  // Accidental exit warning: only warn if there are unsaved, unsubmitted drafts
+  const hasUnsubmittedDraft = Object.entries(answers).some(
+    ([qId, ans]) => ans && ans.trim().length > 0 && !evaluations[qId]
+  );
 
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (hasAnswersTyped) {
+      if (hasUnsubmittedDraft) {
         e.preventDefault();
         e.returnValue = "";
       }
@@ -170,12 +305,11 @@ export default function InterviewSessionPage({ params }: PageProps) {
     return () => {
       window.removeEventListener("beforeunload", handleBeforeUnload);
     };
-  }, [hasAnswersTyped]);
+  }, [hasUnsubmittedDraft]);
 
-  // Keyboard navigation shortcuts (Requirement 15)
+  // Keyboard navigation shortcuts
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      // Avoid intercepting if inside a generic modal or other element
       if (showExitModal) return;
 
       if (e.altKey && e.key === "ArrowRight") {
@@ -193,7 +327,7 @@ export default function InterviewSessionPage({ params }: PageProps) {
     };
   }, [handleNext, handlePrevious, showExitModal]);
 
-  // 1. Loading State (Requirement 12)
+  // 1. Loading State
   if (isLoading) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center p-6 text-center">
@@ -211,7 +345,7 @@ export default function InterviewSessionPage({ params }: PageProps) {
     );
   }
 
-  // 2. Error State (Requirement 13)
+  // 2. Error State
   if (error || !session) {
     return (
       <div className="mx-auto max-w-2xl mt-12 rounded-2xl border border-red-500/30 bg-red-950/20 p-8 text-center backdrop-blur-sm">
@@ -242,7 +376,7 @@ export default function InterviewSessionPage({ params }: PageProps) {
     );
   }
 
-  // 3. Empty Questions State (Requirement 14)
+  // 3. Empty Questions State
   if (!session.questions || session.questions.length === 0) {
     return (
       <div className="space-y-6">
@@ -280,8 +414,9 @@ export default function InterviewSessionPage({ params }: PageProps) {
     );
   }
 
+  // Count answered questions (either submitted or typed)
   const answeredCount = session.questions.filter(
-    (q) => answers[q.id] && answers[q.id].trim().length > 0
+    (q) => Boolean(evaluations[q.id]) || Boolean(answers[q.id]?.trim())
   ).length;
 
   return (
@@ -297,7 +432,7 @@ export default function InterviewSessionPage({ params }: PageProps) {
         totalQuestions={session.questions.length}
         answeredCount={answeredCount}
         onExitRequest={() => {
-          if (hasAnswersTyped) {
+          if (hasUnsubmittedDraft) {
             setShowExitModal(true);
           } else {
             router.push("/dashboard");
@@ -310,21 +445,23 @@ export default function InterviewSessionPage({ params }: PageProps) {
         questions={session.questions}
         currentIndex={currentIndex}
         answers={answers}
+        evaluations={evaluations}
         autosaveStatus={autosaveStatus}
+        isSubmitting={isSubmitting}
+        isRetrying={isRetrying}
+        submissionError={submissionError}
         onAnswerChange={handleAnswerChange}
+        onSubmitAnswer={handleSubmitAnswer}
+        onRetryEvaluation={handleRetryEvaluation}
         onSelectQuestion={handleSelectQuestion}
         onPrevious={handlePrevious}
         onNext={handleNext}
         onFinish={() => {
-          // In Phase 6, we do NOT evaluate answers yet.
-          // Simply show review or prompt.
-          alert(
-            `You have answered ${answeredCount} of ${session.questions.length} questions. All answers are saved in local storage. Answer evaluation will be available in Phase 7!`
-          );
+          router.push("/dashboard");
         }}
       />
 
-      {/* Exit Confirmation Dialog (Requirement 11) */}
+      {/* Exit Confirmation Dialog */}
       {showExitModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
@@ -340,7 +477,7 @@ export default function InterviewSessionPage({ params }: PageProps) {
               </h3>
             </div>
             <p className="text-sm text-zinc-300 leading-relaxed">
-              You have answers typed for this session. Your responses are autosaved in this browser, but exiting will return you to your dashboard.
+              You have unsubmitted answer drafts. Leaving now will keep your drafts stored in this browser, but returning to your dashboard will pause your live session.
             </p>
             <div className="mt-6 flex justify-end gap-3">
               <button

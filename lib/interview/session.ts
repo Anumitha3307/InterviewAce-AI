@@ -112,7 +112,75 @@ export function formatQuestionRecord(q: {
     category: meta?.category ?? null,
     order: q.order,
     createdAt: q.createdAt,
-    answers: q.answers || [],
+    answers: ((q.answers || []) as Array<{
+      id: string;
+      interviewQuestionId: string;
+      answer: string;
+      durationSeconds?: number | null;
+      createdAt: Date;
+      feedback?: {
+        id: string;
+        interviewAnswerId: string;
+        score: number;
+        technicalScore?: number | null;
+        communicationScore?: number | null;
+        confidenceScore?: number | null;
+        strengths: unknown;
+        weaknesses: unknown;
+        suggestions: unknown;
+        overallFeedback: string;
+        createdAt: Date;
+      } | null;
+    }>).map((ans) => {
+      const fb = ans.feedback;
+      if (!fb) {
+        return {
+          id: ans.id,
+          interviewQuestionId: ans.interviewQuestionId,
+          answer: ans.answer,
+          durationSeconds: ans.durationSeconds,
+          createdAt: ans.createdAt,
+          feedback: null,
+        };
+      }
+
+      const metaSuggestions = (fb.suggestions || {}) as {
+        improvementSuggestions?: string[];
+        missingConcepts?: string[];
+        idealAnswer?: string;
+        followUpQuestions?: string[];
+        problemSolving?: number;
+      };
+
+      return {
+        id: ans.id,
+        interviewQuestionId: ans.interviewQuestionId,
+        answer: ans.answer,
+        durationSeconds: ans.durationSeconds,
+        createdAt: ans.createdAt,
+        feedback: {
+          id: fb.id,
+          interviewAnswerId: fb.interviewAnswerId,
+          score: fb.score,
+          technicalAccuracy: fb.technicalScore ?? fb.score,
+          communication: fb.communicationScore ?? fb.score,
+          problemSolving: metaSuggestions.problemSolving ?? fb.score,
+          confidence: fb.confidenceScore ?? fb.score,
+          strengths: Array.isArray(fb.strengths) ? fb.strengths : [],
+          weaknesses: Array.isArray(fb.weaknesses) ? fb.weaknesses : [],
+          missingConcepts: Array.isArray(metaSuggestions.missingConcepts) ? metaSuggestions.missingConcepts : [],
+          improvementSuggestions: Array.isArray(metaSuggestions.improvementSuggestions)
+            ? metaSuggestions.improvementSuggestions
+            : Array.isArray(fb.suggestions)
+            ? fb.suggestions
+            : [],
+          idealAnswer: metaSuggestions.idealAnswer || "",
+          followUpQuestions: Array.isArray(metaSuggestions.followUpQuestions) ? metaSuggestions.followUpQuestions : [],
+          overallFeedback: fb.overallFeedback,
+          createdAt: fb.createdAt,
+        },
+      };
+    }),
   };
 }
 
