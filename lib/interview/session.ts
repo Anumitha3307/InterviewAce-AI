@@ -37,6 +37,7 @@ export const createSessionSchema = z.object({
     ["EASY", "MEDIUM", "HARD"],
     { message: "Difficulty must be one of: EASY, MEDIUM, HARD" }
   ),
+  resumeText: z.string().trim().optional().nullable(),
 });
 
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
@@ -77,6 +78,45 @@ export async function getUserInterviewSessions(userId: string) {
 }
 
 /**
+ * Formats a question record ensuring expectedTopics array and metadata are cleanly exposed
+ */
+export function formatQuestionRecord(q: {
+  id: string;
+  interviewSessionId: string;
+  question: string;
+  expectedTopics: unknown;
+  order: number;
+  createdAt: Date;
+  answers?: unknown[];
+}) {
+  const meta = q.expectedTopics as {
+    topics?: string[];
+    estimatedMinutes?: number;
+    difficulty?: string;
+    category?: string;
+  } | null;
+
+  const topicsArray: string[] = Array.isArray(q.expectedTopics)
+    ? (q.expectedTopics as string[])
+    : Array.isArray(meta?.topics)
+    ? meta.topics
+    : [];
+
+  return {
+    id: q.id,
+    interviewSessionId: q.interviewSessionId,
+    question: q.question,
+    expectedTopics: topicsArray,
+    estimatedMinutes: meta?.estimatedMinutes ?? null,
+    difficulty: meta?.difficulty ?? null,
+    category: meta?.category ?? null,
+    order: q.order,
+    createdAt: q.createdAt,
+    answers: q.answers || [],
+  };
+}
+
+/**
  * Retrieves a single interview session by ID, ensuring user ownership
  */
 export async function getInterviewSessionById(userId: string, sessionId: string) {
@@ -103,7 +143,10 @@ export async function getInterviewSessionById(userId: string, sessionId: string)
     throw new SessionError("Interview session not found or access denied.", "SESSION_NOT_FOUND");
   }
 
-  return session;
+  return {
+    ...session,
+    questions: session.questions.map(formatQuestionRecord),
+  };
 }
 
 /**

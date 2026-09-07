@@ -7,14 +7,19 @@ import {
   getUserInterviewSessions,
   getInterviewSessionById,
   deleteInterviewSession,
+  formatQuestionRecord,
   SessionError,
 } from "@/lib/interview/session";
+import {
+  generateInterviewQuestions,
+  saveInterviewQuestions,
+} from "@/lib/interview/questionGenerator";
 
 const queryIdSchema = z.string().trim().min(1, "Session ID parameter is required");
 
 /**
  * POST /api/interview/session
- * Creates a new interview session for the authenticated user
+ * Creates a new interview session for the authenticated user and generates questions
  */
 export async function POST(req: NextRequest) {
   try {
@@ -48,15 +53,53 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // 1. Create Session in Database
     const interviewSession = await createInterviewSession(
       session.user.id,
       validation.data
     );
 
+    // 2. Generate and Store Questions via AI
+    let questions: ReturnType<typeof formatQuestionRecord>[] = [];
+    let warning: string | undefined = undefined;
+
+    try {
+      const generated = await generateInterviewQuestions({
+        role: validation.data.role,
+        company: validation.data.company,
+        interviewType: validation.data.interviewType,
+        difficulty: validation.data.difficulty,
+        resumeText: validation.data.resumeText,
+      });
+
+      const savedRecords = await saveInterviewQuestions(
+        interviewSession.id,
+        generated
+      );
+
+      questions = savedRecords.map(formatQuestionRecord);
+    } catch (aiErr) {
+      console.warn("AI question generation failed during session creation:", aiErr);
+      // Graceful error handling per requirements:
+      // Session should still be created.
+      // Status remains NOT_STARTED.
+      // Questions remain empty.
+      // Return warning: "Questions could not be generated."
+      warning = "Questions could not be generated.";
+      questions = [];
+    }
+
     return NextResponse.json(
       {
-        message: "Interview session created successfully.",
-        session: interviewSession,
+        message: warning
+          ? "Interview session created, but questions could not be generated."
+          : "Interview session and questions created successfully.",
+        session: {
+          ...interviewSession,
+          questions,
+        },
+        questions,
+        ...(warning ? { warning } : {}),
       },
       { status: 201 }
     );
@@ -68,6 +111,7 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
 
 /**
  * GET /api/interview/session
