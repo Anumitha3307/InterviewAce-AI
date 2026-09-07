@@ -56,11 +56,6 @@ export async function analyzeResumeText(resumeText: string): Promise<ResumeAnaly
     throw new ResumeAnalysisError("Resume text cannot be empty for AI analysis.", "EMPTY_TEXT");
   }
 
-  // Support mock mode for isolated testing environments or CI without live OpenAI quota
-  if (process.env.MOCK_OPENAI === "true") {
-    return generateMockAnalysis(resumeText);
-  }
-
   let content: string | null = null;
   try {
     const completion = await openai.chat.completions.create({
@@ -99,41 +94,7 @@ export async function analyzeResumeText(resumeText: string): Promise<ResumeAnaly
   return validation.data;
 }
 
-/**
- * Helper to generate deterministic mock analysis for test scenarios
- */
-export function generateMockAnalysis(resumeText: string): ResumeAnalysisResult {
-  const isSenior = /senior|lead|architect|principal|staff/i.test(resumeText);
-  return {
-    atsScore: isSenior ? 88 : 78,
-    technicalSkills: ["TypeScript", "React", "Next.js", "Node.js", "PostgreSQL", "Tailwind CSS"],
-    softSkills: ["Cross-functional Collaboration", "System Design", "Agile Development", "Code Review"],
-    missingKeywords: ["CI/CD Pipeline", "Kubernetes", "AWS Lambda", "Performance Profiling"],
-    strengths: [
-      "Demonstrated experience with modern full-stack TypeScript technologies.",
-      "Clear articulation of frontend component architecture and state management.",
-      "Strong foundational knowledge of relational database integrations.",
-    ],
-    weaknesses: [
-      "Bullet points could benefit from more quantifiable metrics (e.g. % performance increase).",
-      "Limited mention of automated testing tools or end-to-end testing frameworks.",
-    ],
-    improvementSuggestions: [
-      "Quantify achievements using metrics like latency reduction, active users, or revenue impact.",
-      "Incorporate cloud deployment tools such as Docker, AWS, or Terraform.",
-      "Add a dedicated skills matrix at the top of the resume for faster ATS indexing.",
-    ],
-    resumeSummary:
-      "A software engineering professional with demonstrable proficiency in TypeScript, Next.js, and web application architecture. Shows a history of delivering functional user experiences and robust backend APIs. Well-positioned for competitive software engineering opportunities.",
-    experienceLevel: isSenior ? "Senior" : "Mid-Level",
-    recommendedJobRoles: [
-      "Full Stack Engineer",
-      "Frontend Engineer",
-      "Software Engineer II",
-      "React/Next.js Developer",
-    ],
-  };
-}
+
 
 /**
  * Persists an AI analysis result into the Prisma ResumeAnalysis table
